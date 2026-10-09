@@ -69,3 +69,9 @@ The project is organized into `apps` and `packages`:
 Starting services:
 - `pnpm web`: Start the web application (this doesn't return, unless you kill it).
 - `pnpm workers`: Starts the background workers (this doesn't return, unless you kill it).
+
+### Committing
+
+- Commit and push regularly: after each change that works and passes typecheck, lint and format, commit it and push the branch (`git push -u origin <branch>`). Don't let finished work sit uncommitted.
+- Work on a feature branch, never directly on `main`.
+- Only commit files that belong to the change. Leave unrelated local edits uncommitted.
