@@ -1083,7 +1083,7 @@ export const bookmarksAppRouter = router({
           const semanticSearch = async (limit: number) => {
             const embeddingResponse =
               await embeddingClient.generateEmbeddingFromText([
-                parsedQuery.text,
+                serverConfig.embedding.queryPrefix + parsedQuery.text,
               ]);
             const vector = embeddingResponse.embeddings[0];
             if (!vector) {

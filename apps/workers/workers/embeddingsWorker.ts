@@ -455,7 +455,7 @@ async function runEmbed(
   );
 
   const embeddingResponse = await embeddingClient.generateEmbeddingFromText([
-    embeddingText,
+    serverConfig.embedding.documentPrefix + embeddingText,
   ]);
 
   if (

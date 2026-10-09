@@ -98,6 +98,8 @@ const allEnv = z.object({
     .positive()
     .optional(),
   EMBEDDING_DIMENSIONS: z.coerce.number().default(1536),
+  EMBEDDING_QUERY_PREFIX: z.string().default(""),
+  EMBEDDING_DOCUMENT_PREFIX: z.string().default(""),
   EMBEDDING_CONTEXT_LENGTH: z.coerce.number().int().positive().default(8000),
   EMBEDDING_NUM_WORKERS: z.coerce.number().default(1),
   EMBEDDING_JOB_TIMEOUT_SEC: z.coerce.number().default(60),
@@ -414,6 +416,8 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
       textModel: val.EMBEDDING_TEXT_MODEL,
       textModelDimensionOverride: val.EMBEDDING_TEXT_MODEL_DIMENSION_OVERRIDE,
       dimensions: val.EMBEDDING_DIMENSIONS,
+      queryPrefix: val.EMBEDDING_QUERY_PREFIX,
+      documentPrefix: val.EMBEDDING_DOCUMENT_PREFIX,
       contextLength: val.EMBEDDING_CONTEXT_LENGTH,
       numWorkers: val.EMBEDDING_NUM_WORKERS,
       jobTimeoutSec: val.EMBEDDING_JOB_TIMEOUT_SEC,
