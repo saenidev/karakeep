@@ -2,6 +2,7 @@ import os from "os";
 import { and, eq } from "drizzle-orm";
 import { workerStatsCounter } from "metrics";
 import { withWorkerEventLog, withWorkerTracing } from "workerTracing";
+import { z } from "zod";
 
 import type { AssetPreprocessingRequest } from "@karakeep/shared-server";
 import { db } from "@karakeep/db";
@@ -133,6 +134,30 @@ async function readImageText(buffer: Buffer) {
   } finally {
     await worker.terminate();
   }
+}
+
+/**
+ * Reads image text with a local TeleOCR server (see OCR_TELEOCR_URL). Throws on
+ * any server error so the caller can fall back to Tesseract.
+ */
+async function readImageTextWithTeleOCR(
+  buffer: Buffer,
+): Promise<string | null> {
+  const baseUrl = serverConfig.ocr.teleocrUrl!.replace(/\/+$/, "");
+  const res = await fetch(`${baseUrl}/v1/ocr`, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: new Uint8Array(buffer),
+    signal: AbortSignal.timeout(
+      serverConfig.assetPreprocessing.jobTimeoutSec * 1000,
+    ),
+  });
+  if (!res.ok) {
+    const detail = (await res.text()).substring(0, 200);
+    throw new Error(`TeleOCR returned HTTP ${res.status}: ${detail}`);
+  }
+  const { text } = z.object({ text: z.string() }).parse(await res.json());
+  return text.trim() || null;
 }
 
 async function readImageTextWithLLM(
@@ -294,8 +319,24 @@ async function extractAndSaveImageText(
     }
   }
   let imageText = null;
+  let teleocrSucceeded = false;
 
-  if (serverConfig.ocr.useLLM) {
+  if (serverConfig.ocr.teleocrUrl) {
+    logger.info(
+      `[assetPreprocessing][${jobId}] Attempting to extract text from image using TeleOCR.`,
+    );
+    try {
+      imageText = await readImageTextWithTeleOCR(asset);
+      teleocrSucceeded = true;
+    } catch (e) {
+      logger.warn(
+        `[assetPreprocessing][${jobId}] TeleOCR failed, falling back: ${e}`,
+      );
+    }
+  }
+
+  // If TeleOCR answered, an empty result means the image has no text.
+  if (!teleocrSucceeded && serverConfig.ocr.useLLM) {
     logger.info(
       `[assetPreprocessing][${jobId}] Attempting to extract text from image using LLM OCR.`,
     );
@@ -306,7 +347,7 @@ async function extractAndSaveImageText(
         `[assetPreprocessing][${jobId}] Failed to read image text with LLM: ${e}`,
       );
     }
-  } else {
+  } else if (!teleocrSucceeded) {
     logger.info(
       `[assetPreprocessing][${jobId}] Attempting to extract text from image using Tesseract.`,
     );

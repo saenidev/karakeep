@@ -415,6 +415,11 @@ async function inferTags(
 }
 
 /**
+ * Images with at least this much extracted text are tagged from the text alone.
+ */
+const IMAJEV_MIN_IMAGE_TEXT_CHARS = 200;
+
+/**
  * Candidate tags for imajev when the user has no curated tags: tags from
  * similar bookmarks first, then the user's most used tags.
  */
@@ -490,6 +495,14 @@ async function inferTagsWithImajev(
     input = { state: { content: bookmark.text.text ?? "" } };
   } else if (bookmark.asset?.assetType === "pdf") {
     input = { state: { content: bookmark.asset.content ?? "" } };
+  } else if (
+    bookmark.asset?.assetType === "image" &&
+    (bookmark.asset.content?.length ?? 0) >= IMAJEV_MIN_IMAGE_TEXT_CHARS
+  ) {
+    // imajev reads text more accurately than images, so a text-heavy image
+    // (e.g. a screenshot) is tagged from the text read out of it during
+    // asset preprocessing.
+    input = { state: { imageText: bookmark.asset.content! } };
   } else if (bookmark.asset?.assetType === "image") {
     const { asset, metadata } = await readAsset({
       userId: bookmark.userId,
@@ -506,7 +519,8 @@ async function inferTagsWithImajev(
       );
       return null;
     }
-    input = { state: {}, image: asset };
+    const imageText = bookmark.asset.content;
+    input = { state: imageText ? { imageText } : {}, image: asset };
   } else {
     throw new Error(`[inference][${jobId}] Unsupported bookmark type`);
   }
