@@ -168,12 +168,15 @@ async function readImageTextWithTeleOCR(
  */
 async function readImageTextWithAppleVision(
   buffer: Buffer,
-): Promise<string | null> {
+): Promise<{ text: string | null; confidence: number }> {
   const { stdout } = await execa(serverConfig.ocr.appleVisionBinary!, [], {
     input: buffer,
     timeout: serverConfig.assetPreprocessing.jobTimeoutSec * 1000,
   });
-  return stdout.trim() || null;
+  const { text, confidence } = z
+    .object({ text: z.string(), confidence: z.number() })
+    .parse(JSON.parse(stdout));
+  return { text: text.trim() || null, confidence };
 }
 
 async function readImageTextWithLLM(
@@ -337,31 +340,42 @@ async function extractAndSaveImageText(
   let imageText = null;
   let localOcrSucceeded = false;
 
-  const localOcrEngines = [
-    {
-      name: "Apple Vision",
-      enabled: !!serverConfig.ocr.appleVisionBinary,
-      read: readImageTextWithAppleVision,
-    },
-    {
-      name: "TeleOCR",
-      enabled: !!serverConfig.ocr.teleocrUrl,
-      read: readImageTextWithTeleOCR,
-    },
-  ];
-  for (const engine of localOcrEngines) {
-    if (!engine.enabled || localOcrSucceeded) {
-      continue;
-    }
-    logger.info(
-      `[assetPreprocessing][${jobId}] Attempting to extract text from image using ${engine.name}.`,
-    );
+  // Apple Vision is fast and light, so it reads every image. TeleOCR is more
+  // accurate but heavier, so it only gets images Vision is unsure about, or
+  // all images if Vision fails or isn't configured.
+  let visionConfidence: number | null = null;
+  if (serverConfig.ocr.appleVisionBinary) {
     try {
-      imageText = await engine.read(asset);
+      const vision = await readImageTextWithAppleVision(asset);
+      imageText = vision.text;
+      visionConfidence = vision.confidence;
+      localOcrSucceeded = true;
+      logger.info(
+        `[assetPreprocessing][${jobId}] Apple Vision read ${imageText?.length ?? 0} characters (confidence ${vision.confidence.toFixed(2)}).`,
+      );
+    } catch (e) {
+      logger.warn(`[assetPreprocessing][${jobId}] Apple Vision failed: ${e}`);
+    }
+  }
+
+  // An empty Vision result means the image has no text, so only escalate
+  // when Vision found text but wasn't confident about it.
+  const visionUnsure =
+    imageText !== null &&
+    visionConfidence !== null &&
+    visionConfidence < serverConfig.ocr.appleVisionMinConfidence;
+  if (serverConfig.ocr.teleocrUrl && (!localOcrSucceeded || visionUnsure)) {
+    try {
+      const teleocrText = await readImageTextWithTeleOCR(asset);
+      logger.info(
+        `[assetPreprocessing][${jobId}] TeleOCR read ${teleocrText?.length ?? 0} characters.`,
+      );
+      // Keep Vision's text if TeleOCR found nothing.
+      imageText = teleocrText ?? imageText;
       localOcrSucceeded = true;
     } catch (e) {
       logger.warn(
-        `[assetPreprocessing][${jobId}] ${engine.name} failed, falling back: ${e}`,
+        `[assetPreprocessing][${jobId}] TeleOCR failed${localOcrSucceeded ? ", keeping Apple Vision's text" : ""}: ${e}`,
       );
     }
   }

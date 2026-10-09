@@ -119,6 +119,7 @@ const allEnv = z.object({
   OCR_USE_LLM: stringBool("false"),
   OCR_TELEOCR_URL: z.string().url().optional(),
   OCR_APPLE_VISION_BINARY: z.string().optional(),
+  OCR_APPLE_VISION_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.8),
   CRAWLER_HEADLESS_BROWSER: stringBool("true"),
   BROWSER_WEB_URL: z.string().optional(),
   BROWSER_WEBSOCKET_URL: z.string().optional(),
@@ -467,6 +468,7 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
       useLLM: val.OCR_USE_LLM,
       teleocrUrl: val.OCR_TELEOCR_URL,
       appleVisionBinary: val.OCR_APPLE_VISION_BINARY,
+      appleVisionMinConfidence: val.OCR_APPLE_VISION_MIN_CONFIDENCE,
     },
     search: {
       numWorkers: val.SEARCH_NUM_WORKERS,
