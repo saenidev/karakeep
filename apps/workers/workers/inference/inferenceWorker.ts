@@ -84,7 +84,7 @@ async function runOpenAI(job: DequeuedJob<ZOpenAIRequest>) {
   const jobId = job.id;
 
   const inferenceClient = InferenceClientFactory.build();
-  if (!inferenceClient) {
+  if (!inferenceClient && !serverConfig.inference.imajev.baseUrl) {
     logger.debug(
       `[inference][${jobId}] No inference client configured, nothing to do now`,
     );
@@ -113,6 +113,13 @@ async function runOpenAI(job: DequeuedJob<ZOpenAIRequest>) {
   });
   switch (request.data.type) {
     case "summarize":
+      // imajev can't generate text, so summaries need an LLM.
+      if (!inferenceClient) {
+        logger.debug(
+          `[inference][${jobId}] No LLM configured, skipping summarization`,
+        );
+        return;
+      }
       await runSummarization(bookmarkId, job, inferenceClient);
       break;
     case "tag":

@@ -78,6 +78,9 @@ const allEnv = z.object({
     .optional(),
   OLLAMA_BASE_URL: z.string().url().optional(),
   OLLAMA_KEEP_ALIVE: z.string().optional(),
+  IMAJEV_BASE_URL: z.string().url().optional(),
+  IMAJEV_TAG_THRESHOLD: z.coerce.number().min(0).max(1).default(0.5),
+  IMAJEV_MAX_CANDIDATE_TAGS: z.coerce.number().int().positive().default(64),
   CHAT_ENABLED: stringBool("false"),
   CHAT_MODEL: z.string().optional(),
   SEMANTIC_SEARCH_ENABLED: stringBool("true"),
@@ -381,6 +384,11 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
           : val.INFERENCE_OUTPUT_SCHEMA,
       enableAutoTagging: val.INFERENCE_ENABLE_AUTO_TAGGING,
       enableAutoSummarization: val.INFERENCE_ENABLE_AUTO_SUMMARIZATION,
+      imajev: {
+        baseUrl: val.IMAJEV_BASE_URL,
+        tagThreshold: val.IMAJEV_TAG_THRESHOLD,
+        maxCandidateTags: val.IMAJEV_MAX_CANDIDATE_TAGS,
+      },
     },
     chat: {
       enabled: val.CHAT_ENABLED,

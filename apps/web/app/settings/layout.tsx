@@ -59,7 +59,8 @@ const settingsSidebarItems = (
           },
         ]
       : []),
-    ...(serverConfig.inference.isConfigured
+    ...(serverConfig.inference.isConfigured ||
+    serverConfig.inference.imajev.baseUrl
       ? [
           {
             name: t("settings.ai.ai_settings"),

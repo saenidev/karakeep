@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { getBookmarkDomain } from "network";
 import { buildImpersonatingTRPCClient } from "trpc";
 import { z } from "zod";
@@ -33,6 +33,9 @@ import { DequeuedJob, EnqueueOptions } from "@karakeep/shared/queueing";
 import { RuleEngine } from "@karakeep/trpc/lib/ruleEngine";
 import { Bookmark } from "@karakeep/trpc/models/bookmarks";
 import { WebhooksService } from "@karakeep/trpc/models/webhooks.service";
+
+import type { ImajevTaggingInput } from "./imajev";
+import { pickTagsWithImajev } from "./imajev";
 
 /**
  * The maximum length of the relevant tag names to avoid bloating the inference context.
@@ -411,6 +414,113 @@ async function inferTags(
   }
 }
 
+/**
+ * Candidate tags for imajev when the user has no curated tags: tags from
+ * similar bookmarks first, then the user's most used tags.
+ */
+async function getImajevCandidateTags(
+  userId: string,
+  potentialRelevantTags?: string[],
+): Promise<string[]> {
+  const { maxCandidateTags } = serverConfig.inference.imajev;
+  const mostUsed = await db
+    .select({ name: bookmarkTags.name })
+    .from(bookmarkTags)
+    .leftJoin(tagsOnBookmarks, eq(bookmarkTags.id, tagsOnBookmarks.tagId))
+    .where(eq(bookmarkTags.userId, userId))
+    .groupBy(bookmarkTags.id)
+    .orderBy(desc(count(tagsOnBookmarks.bookmarkId)))
+    .limit(maxCandidateTags);
+
+  const candidates = new Set([
+    ...(potentialRelevantTags ?? []),
+    ...mostUsed.map((t) => t.name),
+  ]);
+  return [...candidates].slice(0, maxCandidateTags);
+}
+
+async function inferTagsWithImajev(
+  jobId: string,
+  bookmark: NonNullable<Awaited<ReturnType<typeof fetchBookmark>>>,
+  abortSignal: AbortSignal,
+  candidateTags: string[],
+): Promise<string[] | null> {
+  setSpanAttributes({
+    "user.id": bookmark.userId,
+    "bookmark.id": bookmark.id,
+    "inference.type": "tagging",
+  });
+  addLogFields<"inferenceWorker.run">({
+    "user.id": bookmark.userId,
+    "bookmark.url": bookmark.link?.url,
+    "bookmark.domain": getBookmarkDomain(bookmark.link?.url),
+    "bookmark.content_type": bookmark.type,
+    "inference.model": "imajev",
+  });
+
+  if (candidateTags.length === 0) {
+    logger.info(
+      `[inference][${jobId}] No tags to choose from for bookmark "${bookmark.id}". imajev can only pick existing tags, so skipping.`,
+    );
+    return null;
+  }
+
+  let input: ImajevTaggingInput;
+  if (bookmark.link) {
+    const content =
+      (await Bookmark.getBookmarkPlainTextContent(
+        bookmark.link,
+        bookmark.userId,
+      )) ?? "";
+    if (!bookmark.link.description && !content) {
+      logger.info(
+        `[inference][${jobId}] No content found for link "${bookmark.id}". Skipping tagging.`,
+      );
+      return null;
+    }
+    input = {
+      state: {
+        url: bookmark.link.url,
+        title: bookmark.link.title ?? "",
+        description: bookmark.link.description ?? "",
+        content,
+      },
+    };
+  } else if (bookmark.text) {
+    input = { state: { content: bookmark.text.text ?? "" } };
+  } else if (bookmark.asset?.assetType === "pdf") {
+    input = { state: { content: bookmark.asset.content ?? "" } };
+  } else if (bookmark.asset?.assetType === "image") {
+    const { asset, metadata } = await readAsset({
+      userId: bookmark.userId,
+      assetId: bookmark.asset.assetId,
+    });
+    if (!asset) {
+      throw new Error(
+        `[inference][${jobId}] AssetId ${bookmark.asset.assetId} for bookmark ${bookmark.id} not found`,
+      );
+    }
+    if (metadata.contentType === ASSET_TYPES.IMAGE_GIF) {
+      logger.info(
+        `[inference][${jobId}] Skipping inference for bookmark with id "${bookmark.id}" because it's a GIF.`,
+      );
+      return null;
+    }
+    input = { state: {}, image: asset };
+  } else {
+    throw new Error(`[inference][${jobId}] Unsupported bookmark type`);
+  }
+
+  const tags = await pickTagsWithImajev(input, candidateTags, abortSignal);
+  logger.info(
+    `[inference][${jobId}] imajev picked ${tags.length} of ${candidateTags.length} candidate tags for bookmark "${bookmark.id}": ${tags}`,
+  );
+  addLogFields<"inferenceWorker.run">({
+    "inference.tagging.num_generated_tags": tags.length,
+  });
+  return tags;
+}
+
 async function connectTags(
   bookmarkId: string,
   inferredTags: string[],
@@ -629,7 +739,7 @@ async function getPotentiallyRelevantTags(
 export async function runTagging(
   bookmarkId: string,
   job: DequeuedJob<ZOpenAIRequest>,
-  inferenceClient: InferenceClient,
+  inferenceClient: InferenceClient | null,
 ) {
   if (!serverConfig.inference.enableAutoTagging) {
     logger.debug(
@@ -696,16 +806,29 @@ export async function runTagging(
     `[inference][${jobId}] Starting an inference job for bookmark with id "${bookmark.id}"`,
   );
 
-  const tags = await inferTags(
-    jobId,
-    bookmark,
-    inferenceClient,
-    job.abortSignal,
-    userSettings?.tagStyle ?? "as-generated",
-    userSettings?.inferredTagLang ?? serverConfig.inference.inferredTagLang,
-    curatedTagNames,
-    potentialRelevantTags,
-  );
+  let tags: string[] | null;
+  if (serverConfig.inference.imajev.baseUrl) {
+    tags = await inferTagsWithImajev(
+      jobId,
+      bookmark,
+      job.abortSignal,
+      curatedTagNames ??
+        (await getImajevCandidateTags(bookmark.userId, potentialRelevantTags)),
+    );
+  } else if (inferenceClient) {
+    tags = await inferTags(
+      jobId,
+      bookmark,
+      inferenceClient,
+      job.abortSignal,
+      userSettings?.tagStyle ?? "as-generated",
+      userSettings?.inferredTagLang ?? serverConfig.inference.inferredTagLang,
+      curatedTagNames,
+      potentialRelevantTags,
+    );
+  } else {
+    return;
+  }
 
   if (tags === null) {
     logger.info(
