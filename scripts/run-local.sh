@@ -26,10 +26,11 @@ log() {
     printf '==> %s\n' "$*"
 }
 
-# The commit plus a hash of uncommitted changes, so edits trigger a rebuild.
+# The committed apps/ and packages/ trees plus a hash of uncommitted changes to
+# them, so code edits trigger a rebuild but docs-only commits don't.
 source_rev() {
     {
-        git rev-parse HEAD
+        git rev-parse HEAD:apps HEAD:packages
         git diff HEAD -- apps packages | shasum
     } | shasum | cut -d' ' -f1
 }
