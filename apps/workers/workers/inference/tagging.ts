@@ -21,6 +21,7 @@ import {
 import {
   addLogFields,
   ASSET_TYPES,
+  OpenAIQueue,
   readAsset,
   setSpanAttributes,
   triggerSearchReindex,
@@ -35,7 +36,7 @@ import { Bookmark } from "@karakeep/trpc/models/bookmarks";
 import { WebhooksService } from "@karakeep/trpc/models/webhooks.service";
 
 import type { ImajevTaggingInput } from "./imajev";
-import { pickTagsWithImajev } from "./imajev";
+import { isImajevReachable, pickTagsWithImajev } from "./imajev";
 
 /**
  * The maximum length of the relevant tag names to avoid bloating the inference context.
@@ -420,6 +421,14 @@ async function inferTags(
 const IMAJEV_MIN_IMAGE_TEXT_CHARS = 200;
 
 /**
+ * imajev is started on demand, so when it's down the tag job is re-enqueued
+ * with a delay instead of burning its quick retries. After this many
+ * deferrals (about a day), the job runs and fails like any other.
+ */
+const IMAJEV_DEFER_DELAY_MS = 10 * 60 * 1000;
+const IMAJEV_MAX_DEFERRALS = 144;
+
+/**
  * Candidate tags for imajev when the user has no curated tags: tags from
  * similar bookmarks first, then the user's most used tags.
  */
@@ -750,11 +759,15 @@ async function getPotentiallyRelevantTags(
   return [...toKeep];
 }
 
+/**
+ * Returns "deferred" when the job was re-enqueued to run later, in which case
+ * the bookmark's tagging status must stay pending.
+ */
 export async function runTagging(
   bookmarkId: string,
   job: DequeuedJob<ZOpenAIRequest>,
   inferenceClient: InferenceClient | null,
-) {
+): Promise<"deferred" | undefined> {
   if (!serverConfig.inference.enableAutoTagging) {
     logger.debug(
       `[inference][${job.id}] Skipping tagging job for bookmark with id "${bookmarkId}" because it's disabled in the config.`,
@@ -785,6 +798,27 @@ export async function runTagging(
       `[inference][${jobId}] Skipping tagging job for bookmark with id "${bookmarkId}" because user has disabled auto-tagging.`,
     );
     return;
+  }
+
+  if (serverConfig.inference.imajev.baseUrl && !(await isImajevReachable())) {
+    const deferrals = job.data.imajevDeferrals ?? 0;
+    if (deferrals < IMAJEV_MAX_DEFERRALS) {
+      logger.info(
+        `[inference][${jobId}] imajev is unreachable. Retrying tagging for bookmark "${bookmarkId}" in ${IMAJEV_DEFER_DELAY_MS / 60000} minutes (deferral ${deferrals + 1}/${IMAJEV_MAX_DEFERRALS}).`,
+      );
+      await OpenAIQueue.enqueue(
+        { ...job.data, imajevDeferrals: deferrals + 1 },
+        {
+          priority: job.priority,
+          groupId: bookmark.userId,
+          delayMs: IMAJEV_DEFER_DELAY_MS,
+        },
+      );
+      return "deferred";
+    }
+    logger.warn(
+      `[inference][${jobId}] imajev is still unreachable after ${deferrals} deferrals. Trying anyway.`,
+    );
   }
 
   // Resolve curated tag names if configured

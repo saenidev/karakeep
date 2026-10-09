@@ -17,6 +17,7 @@ const MAX_LABELS_PER_REQUEST = 64;
 const MAX_STATE_VALUE_CHARS = 6000;
 // About 1 MP. Bigger images exceed the model's visual token budget.
 const MAX_IMAGE_DIMENSION = 1024;
+const REACHABILITY_TIMEOUT_MS = 3000;
 
 const INSTRUCTIONS =
   "Decide whether this tag fits the bookmark described by the state (its URL, title, description and content) or shown in the image.";
@@ -62,6 +63,25 @@ async function toJpegDataUrl(image: Buffer): Promise<string> {
     .jpeg({ quality: 85 })
     .toBuffer();
   return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+}
+
+/**
+ * Whether the imajev server answers at all. It's started on demand, so it's
+ * often off. Any HTTP response counts; only network errors and timeouts don't.
+ */
+export async function isImajevReachable(): Promise<boolean> {
+  const { baseUrl } = serverConfig.inference.imajev;
+  if (!baseUrl) {
+    return false;
+  }
+  try {
+    await fetch(`${baseUrl.replace(/\/+$/, "")}/v1/models`, {
+      signal: AbortSignal.timeout(REACHABILITY_TIMEOUT_MS),
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

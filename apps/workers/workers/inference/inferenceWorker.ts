@@ -44,16 +44,24 @@ async function attemptMarkStatus(
 export class OpenAiWorker {
   static async build() {
     logger.info("Starting inference worker ...");
-    const worker = (await getQueueClient())!.createRunner<ZOpenAIRequest>(
+    const worker = (await getQueueClient())!.createRunner<
+      ZOpenAIRequest,
+      RunResult
+    >(
       OpenAIQueue,
       {
         run: withWorkerTracing(
           "inferenceWorker.run",
           withWorkerEventLog("inferenceWorker.run", runOpenAI),
         ),
-        onComplete: async (job) => {
-          workerStatsCounter.labels("inference", "completed").inc();
+        onComplete: async (job, result) => {
           const jobId = job.id;
+          if (result === "deferred") {
+            // A delayed copy of the job was enqueued; keep the status pending.
+            logger.info(`[inference][${jobId}] Deferred`);
+            return;
+          }
+          workerStatsCounter.labels("inference", "completed").inc();
           logger.info(`[inference][${jobId}] Completed successfully`);
           await attemptMarkStatus(job.data, "success");
         },
@@ -80,7 +88,9 @@ export class OpenAiWorker {
   }
 }
 
-async function runOpenAI(job: DequeuedJob<ZOpenAIRequest>) {
+type RunResult = Awaited<ReturnType<typeof runTagging>>;
+
+async function runOpenAI(job: DequeuedJob<ZOpenAIRequest>): Promise<RunResult> {
   const jobId = job.id;
 
   const inferenceClient = InferenceClientFactory.build();
@@ -123,8 +133,7 @@ async function runOpenAI(job: DequeuedJob<ZOpenAIRequest>) {
       await runSummarization(bookmarkId, job, inferenceClient);
       break;
     case "tag":
-      await runTagging(bookmarkId, job, inferenceClient);
-      break;
+      return await runTagging(bookmarkId, job, inferenceClient);
     default:
       throw new Error(`Unknown inference type: ${request.data.type}`);
   }

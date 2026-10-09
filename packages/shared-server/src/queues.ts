@@ -124,6 +124,8 @@ export const zOpenAIRequestSchema = z.object({
   // search({vector}) without waiting for the vector to be indexed. Only set on
   // the embed -> tag path.
   embedding: z.array(z.number()).optional(),
+  // How many times a tag job was re-enqueued because imajev was unreachable.
+  imajevDeferrals: z.number().int().nonnegative().optional(),
 });
 export type ZOpenAIRequest = z.infer<typeof zOpenAIRequestSchema>;
 
