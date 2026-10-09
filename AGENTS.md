@@ -69,6 +69,7 @@ The project is organized into `apps` and `packages`:
 Starting services:
 - `pnpm web`: Start the web application (this doesn't return, unless you kill it).
 - `pnpm workers`: Starts the background workers (this doesn't return, unless you kill it).
+- `pnpm local`: Runs web + workers from production builds (rebuilds when the code changed). Use it for day-to-day use; it's much faster and lighter than the dev servers. Set `HOST` and `PORT` to bind elsewhere.
 
 ### Committing
 
