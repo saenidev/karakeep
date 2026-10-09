@@ -80,13 +80,44 @@ pick_port() {
 WEB_PID=""
 WORKERS_PID=""
 
+# Prints the PIDs of every descendant of $1, parents before children.
+descendants() {
+    local child
+    for child in $(pgrep -P "$1" 2>/dev/null || true); do
+        echo "$child"
+        descendants "$child"
+    done
+}
+
+# Stops a process and everything it spawned (pnpm -> next -> next-server).
+# This walks the process tree instead of using process groups, because
+# setpgid (set -m) isn't permitted in some sandboxes. The whole tree is
+# collected before anything is killed, since orphans get reparented and would
+# drop out of it.
+kill_tree() {
+    local pids pid i
+    pids="$1 $(descendants "$1")"
+    # shellcheck disable=SC2086
+    kill -TERM $pids 2>/dev/null || true
+    # Give them up to 5 seconds to exit, then force it.
+    for i in $(seq 1 25); do
+        for pid in $pids; do
+            if kill -0 "$pid" 2>/dev/null; then
+                sleep 0.2
+                continue 2
+            fi
+        done
+        return 0
+    done
+    # shellcheck disable=SC2086
+    kill -KILL $pids 2>/dev/null || true
+}
+
 cleanup() {
     trap - EXIT INT TERM
     log "Stopping web and workers"
-    # Each service runs in its own process group (set -m), so this also stops
-    # the processes they spawn (pnpm -> next -> next-server).
-    if [ -n "$WEB_PID" ]; then kill -- "-$WEB_PID" 2>/dev/null || true; fi
-    if [ -n "$WORKERS_PID" ]; then kill -- "-$WORKERS_PID" 2>/dev/null || true; fi
+    if [ -n "$WEB_PID" ]; then kill_tree "$WEB_PID"; fi
+    if [ -n "$WORKERS_PID" ]; then kill_tree "$WORKERS_PID"; fi
     wait 2>/dev/null || true
 }
 
@@ -130,21 +161,20 @@ start() {
     trap cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
-    set -m
 
     log "Starting workers (log: $LOG_DIR/workers.log)"
     (cd apps/workers && exec node --import tsx index.ts) >"$LOG_DIR/workers.log" 2>&1 &
     WORKERS_PID=$!
 
     log "Starting web on port $PORT (log: $LOG_DIR/web.log)"
-    (cd apps/web && exec pnpm exec next dev) >"$LOG_DIR/web.log" 2>&1 &
+    (cd apps/web && exec pnpm exec next dev -H "$host") >"$LOG_DIR/web.log" 2>&1 &
     WEB_PID=$!
 
     log "Waiting for the web app (the first compile can take a minute)"
     local deadline=$((SECONDS + 300)) code
     while :; do
         fail_if_dead
-        code="$(curl -s -o /dev/null -m 60 -w '%{http_code}' "http://localhost:$PORT/signin" || true)"
+        code="$(curl -s -o /dev/null -m 60 -w '%{http_code}' "http://$host:$PORT/signin" || true)"
         if [ "$code" = 200 ]; then
             break
         fi
