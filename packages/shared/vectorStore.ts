@@ -42,6 +42,8 @@ export interface VectorSimilarSearchOptions {
   // Different filters are ANDed together
   filter?: VectorFilterQuery[];
   limit?: number;
+  // Drop hits whose ranking score is below this threshold (0..1)
+  rankingScoreThreshold?: number;
 }
 
 export interface VectorSearchResponse {

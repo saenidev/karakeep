@@ -666,10 +666,6 @@ async function fetchBookmark(linkId: string) {
   });
 }
 
-// Matches the rankingScoreThreshold the vector store applies in findSimilar, so
-// the search({vector}) path returns comparably relevant neighbors.
-const RELEVANT_TAG_SCORE_THRESHOLD = 0.75;
-
 /**
  * Finds potentially relevant tags for the passed bookmarkId by finding similar
  * bookmarks and fetching their tags.
@@ -706,7 +702,8 @@ async function getPotentiallyRelevantTags(
             // to already be indexed, and still keep up to 10 neighbors.
             limit: 11,
             filter: userFilter,
-            rankingScoreThreshold: RELEVANT_TAG_SCORE_THRESHOLD,
+            rankingScoreThreshold:
+              serverConfig.embedding.similarTagsScoreThreshold,
           })
           .then((r) =>
             r.hits
@@ -719,6 +716,8 @@ async function getPotentiallyRelevantTags(
             id: bookmarkId,
             limit: 10,
             filter: userFilter,
+            rankingScoreThreshold:
+              serverConfig.embedding.similarTagsScoreThreshold,
           })
           .then((r) => r.hits.map((r) => r.id));
 

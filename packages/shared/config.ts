@@ -100,6 +100,16 @@ const allEnv = z.object({
   EMBEDDING_DIMENSIONS: z.coerce.number().default(1536),
   EMBEDDING_QUERY_PREFIX: z.string().default(""),
   EMBEDDING_DOCUMENT_PREFIX: z.string().default(""),
+  EMBEDDING_SEARCH_SCORE_THRESHOLD: z.coerce
+    .number()
+    .min(0)
+    .max(1)
+    .default(0.6),
+  EMBEDDING_SIMILAR_TAGS_SCORE_THRESHOLD: z.coerce
+    .number()
+    .min(0)
+    .max(1)
+    .default(0.75),
   EMBEDDING_CONTEXT_LENGTH: z.coerce.number().int().positive().default(8000),
   EMBEDDING_NUM_WORKERS: z.coerce.number().default(1),
   EMBEDDING_JOB_TIMEOUT_SEC: z.coerce.number().default(60),
@@ -418,6 +428,8 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
       dimensions: val.EMBEDDING_DIMENSIONS,
       queryPrefix: val.EMBEDDING_QUERY_PREFIX,
       documentPrefix: val.EMBEDDING_DOCUMENT_PREFIX,
+      searchScoreThreshold: val.EMBEDDING_SEARCH_SCORE_THRESHOLD,
+      similarTagsScoreThreshold: val.EMBEDDING_SIMILAR_TAGS_SCORE_THRESHOLD,
       contextLength: val.EMBEDDING_CONTEXT_LENGTH,
       numWorkers: val.EMBEDDING_NUM_WORKERS,
       jobTimeoutSec: val.EMBEDDING_JOB_TIMEOUT_SEC,

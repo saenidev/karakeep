@@ -87,9 +87,9 @@ const HYBRID_CANDIDATES_PER_SOURCE = MAX_NUM_BOOKMARKS_PER_PAGE;
  * Vector search always returns as many hits as it's asked for, so without a
  * floor an unrelated query still fills a whole page with noise. Vector stores
  * normalize similarity into a 0..1 ranking score (for cosine distance that's
- * `(1 + cosine) / 2`), so this drops anything below ~0.2 cosine similarity.
+ * `(1 + cosine) / 2`). The floor is EMBEDDING_SEARCH_SCORE_THRESHOLD; the
+ * default 0.6 drops anything below ~0.2 cosine similarity.
  */
-const SEMANTIC_SCORE_THRESHOLD = 0.6;
 
 export const ensureBookmarkOwnership = experimental_trpcMiddleware<{
   ctx: AuthedContext;
@@ -1096,7 +1096,8 @@ export const bookmarksAppRouter = router({
               vector,
               filter: vectorFilter,
               limit,
-              rankingScoreThreshold: SEMANTIC_SCORE_THRESHOLD,
+              rankingScoreThreshold:
+                serverConfig.embedding.searchScoreThreshold,
             });
           };
 
