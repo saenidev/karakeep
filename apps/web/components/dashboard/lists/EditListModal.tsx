@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { ActionButton } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
@@ -38,8 +39,6 @@ import {
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
 import { useTranslation } from "@/lib/i18n/client";
-import data from "@emoji-mart/data";
-import Picker from "@emoji-mart/react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { X } from "lucide-react";
 import { useForm } from "react-hook-form";
@@ -57,6 +56,8 @@ import {
 
 import QueryExplainerTooltip from "../search/QueryExplainerTooltip";
 import { BookmarkListSelector } from "./BookmarkListSelector";
+
+const EmojiPicker = dynamic(() => import("@/components/ui/emoji-picker"));
 
 export function EditListModal({
   open: userOpen,
@@ -233,8 +234,7 @@ export function EditListModal({
                             {field.value}
                           </PopoverTrigger>
                           <PopoverContent className="w-auto">
-                            <Picker
-                              data={data}
+                            <EmojiPicker
                               onEmojiSelect={(e: { native: string }) =>
                                 field.onChange(e.native)
                               }

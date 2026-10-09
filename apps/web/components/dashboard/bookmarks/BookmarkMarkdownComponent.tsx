@@ -1,8 +1,19 @@
-import MarkdownEditor from "@/components/ui/markdown/markdown-editor";
-import { MarkdownReadonly } from "@/components/ui/markdown/markdown-readonly";
+import dynamic from "next/dynamic";
 import { toast } from "@/components/ui/sonner";
 
 import { useUpdateBookmark } from "@karakeep/shared-react/hooks/bookmarks";
+
+// Loaded on demand so the markdown renderer stays out of the main bundle.
+const MarkdownReadonly = dynamic(() =>
+  import("@/components/ui/markdown/markdown-readonly").then(
+    (m) => m.MarkdownReadonly,
+  ),
+);
+
+// The editor (Lexical) is only needed once the user starts editing a note.
+const MarkdownEditor = dynamic(
+  () => import("@/components/ui/markdown/markdown-editor"),
+);
 
 export function BookmarkMarkdownComponent({
   children: bookmark,

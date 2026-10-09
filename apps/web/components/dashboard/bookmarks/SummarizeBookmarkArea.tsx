@@ -1,6 +1,6 @@
 import React from "react";
+import dynamic from "next/dynamic";
 import { ActionButton } from "@/components/ui/action-button";
-import { MarkdownReadonly } from "@/components/ui/markdown/markdown-readonly";
 import { toast } from "@/components/ui/sonner";
 import LoadingSpinner from "@/components/ui/spinner";
 import { useClientConfig } from "@/lib/clientConfig";
@@ -13,6 +13,13 @@ import {
   useUpdateBookmark,
 } from "@karakeep/shared-react/hooks/bookmarks";
 import { BookmarkTypes, ZBookmark } from "@karakeep/shared/types/bookmarks";
+
+// Loaded on demand so the markdown renderer stays out of the main bundle.
+const MarkdownReadonly = dynamic(() =>
+  import("@/components/ui/markdown/markdown-readonly").then(
+    (m) => m.MarkdownReadonly,
+  ),
+);
 
 function AISummary({
   bookmarkId,

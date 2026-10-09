@@ -1,11 +1,12 @@
 import React from "react";
+import dynamic from "next/dynamic";
 import CopyBtn from "@/components/ui/copy-button";
 import { cn } from "@/lib/utils";
 import Markdown from "react-markdown";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { dracula } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+
+const CodeBlock = dynamic(() => import("./code-block"));
 
 function PreWithCopyBtn({ className, ...props }: React.ComponentProps<"pre">) {
   const ref = React.useRef<HTMLPreElement>(null);
@@ -86,14 +87,9 @@ export function MarkdownReadonly({
         code({ className, children, ...props }) {
           const match = /language-(\w+)/.exec(className ?? "");
           return match ? (
-            <SyntaxHighlighter
-              PreTag="div"
-              language={match[1]}
-              {...props}
-              style={dracula}
-            >
+            <CodeBlock language={match[1]}>
               {String(children).replace(/\n$/, "")}
-            </SyntaxHighlighter>
+            </CodeBlock>
           ) : (
             <code className={className} {...props}>
               {children}
