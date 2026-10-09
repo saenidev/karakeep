@@ -1,5 +1,6 @@
 import os from "os";
 import { and, eq } from "drizzle-orm";
+import { execa } from "execa";
 import { workerStatsCounter } from "metrics";
 import { withWorkerEventLog, withWorkerTracing } from "workerTracing";
 import { z } from "zod";
@@ -158,6 +159,21 @@ async function readImageTextWithTeleOCR(
   }
   const { text } = z.object({ text: z.string() }).parse(await res.json());
   return text.trim() || null;
+}
+
+/**
+ * Reads image text with Apple's Vision framework through the
+ * tools/apple-vision-ocr helper (see OCR_APPLE_VISION_BINARY). Throws on
+ * failure so the caller can fall back.
+ */
+async function readImageTextWithAppleVision(
+  buffer: Buffer,
+): Promise<string | null> {
+  const { stdout } = await execa(serverConfig.ocr.appleVisionBinary!, [], {
+    input: buffer,
+    timeout: serverConfig.assetPreprocessing.jobTimeoutSec * 1000,
+  });
+  return stdout.trim() || null;
 }
 
 async function readImageTextWithLLM(
@@ -319,24 +335,39 @@ async function extractAndSaveImageText(
     }
   }
   let imageText = null;
-  let teleocrSucceeded = false;
+  let localOcrSucceeded = false;
 
-  if (serverConfig.ocr.teleocrUrl) {
+  const localOcrEngines = [
+    {
+      name: "Apple Vision",
+      enabled: !!serverConfig.ocr.appleVisionBinary,
+      read: readImageTextWithAppleVision,
+    },
+    {
+      name: "TeleOCR",
+      enabled: !!serverConfig.ocr.teleocrUrl,
+      read: readImageTextWithTeleOCR,
+    },
+  ];
+  for (const engine of localOcrEngines) {
+    if (!engine.enabled || localOcrSucceeded) {
+      continue;
+    }
     logger.info(
-      `[assetPreprocessing][${jobId}] Attempting to extract text from image using TeleOCR.`,
+      `[assetPreprocessing][${jobId}] Attempting to extract text from image using ${engine.name}.`,
     );
     try {
-      imageText = await readImageTextWithTeleOCR(asset);
-      teleocrSucceeded = true;
+      imageText = await engine.read(asset);
+      localOcrSucceeded = true;
     } catch (e) {
       logger.warn(
-        `[assetPreprocessing][${jobId}] TeleOCR failed, falling back: ${e}`,
+        `[assetPreprocessing][${jobId}] ${engine.name} failed, falling back: ${e}`,
       );
     }
   }
 
-  // If TeleOCR answered, an empty result means the image has no text.
-  if (!teleocrSucceeded && serverConfig.ocr.useLLM) {
+  // If a local engine answered, an empty result means the image has no text.
+  if (!localOcrSucceeded && serverConfig.ocr.useLLM) {
     logger.info(
       `[assetPreprocessing][${jobId}] Attempting to extract text from image using LLM OCR.`,
     );
@@ -347,7 +378,7 @@ async function extractAndSaveImageText(
         `[assetPreprocessing][${jobId}] Failed to read image text with LLM: ${e}`,
       );
     }
-  } else if (!teleocrSucceeded) {
+  } else if (!localOcrSucceeded) {
     logger.info(
       `[assetPreprocessing][${jobId}] Attempting to extract text from image using Tesseract.`,
     );
