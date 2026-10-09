@@ -18,6 +18,7 @@
     "web": "pnpm --filter @karakeep/web run dev",
     "web:portless": "pnpm --filter @karakeep/web run dev:portless",
     "dev:worktree": "bash scripts/dev-worktree.sh",
+    "local": "bash scripts/run-local.sh",
     "android": "pnpm --filter @karakeep/mobile android",
     "ios": "pnpm --filter @karakeep/mobile ios",
     "prepare": "husky",

@@ -73,3 +73,4 @@ auth_failures.log
 .codex
 .claude/worktrees
 jean.json
+.local-build-rev
