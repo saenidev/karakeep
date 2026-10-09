@@ -72,6 +72,6 @@ Starting services:
 
 ### Committing
 
-- Commit and push regularly: after each change that works and passes typecheck, lint and format, commit it and push the branch (`git push -u origin <branch>`). Don't let finished work sit uncommitted.
+- Commit and push regularly: after each change that works and passes typecheck, lint and format, commit it and push the branch to the fork (`git push -u fork <branch>`; `origin` is upstream and read-only). Don't let finished work sit uncommitted.
 - Work on a feature branch, never directly on `main`.
 - Only commit files that belong to the change. Leave unrelated local edits uncommitted.
