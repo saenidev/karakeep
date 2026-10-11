@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ActionButton } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
@@ -57,7 +57,21 @@ import {
 import QueryExplainerTooltip from "../search/QueryExplainerTooltip";
 import { BookmarkListSelector } from "./BookmarkListSelector";
 
-const EmojiPicker = dynamic(() => import("@/components/ui/emoji-picker"));
+// The emoji dataset is large, only load it when the picker is opened.
+const EmojiPicker = dynamic(
+  async () => {
+    const [{ default: data }, { default: Picker }] = await Promise.all([
+      import("@emoji-mart/data"),
+      import("@emoji-mart/react"),
+    ]);
+    return function EmojiPicker(props: {
+      onEmojiSelect: (e: { native: string }) => void;
+    }) {
+      return <Picker data={data} {...props} />;
+    };
+  },
+  { ssr: false },
+);
 
 export function EditListModal({
   open: userOpen,

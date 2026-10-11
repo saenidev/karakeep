@@ -17,7 +17,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { z } from "zod";
 
-// Only needed once the release notes dialog is opened.
+// Only needed when the release notes dialog is opened.
 const MarkdownReadonly = dynamic(() =>
   import("@/components/ui/markdown/markdown-readonly").then(
     (m) => m.MarkdownReadonly,
