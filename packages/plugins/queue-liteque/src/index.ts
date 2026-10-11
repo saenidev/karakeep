@@ -24,11 +24,129 @@ import {
   queueOptionsEqual,
 } from "@karakeep/shared/queueing";
 
+// liteque polls every queue with a write transaction each poll interval, which
+// keeps an idle workers process busy. Instead, a runner whose last poll came
+// back empty waits until there may be new work: a job enqueued by this process
+// (immediately), a write by another process such as the web app (noticed within
+// EXTERNAL_WRITE_CHECK_MS), or IDLE_MAX_WAIT_MS passing, which catches jobs that
+// become due without a write (delayed jobs, backoff retries, expired runs).
+const IDLE_MAX_WAIT_MS = 10_000;
+const EXTERNAL_WRITE_CHECK_MS = 1_000;
+// liteque's own sleep after an empty poll; the waiting above does the rest.
+const RUNNER_POLL_INTERVAL_MS = 100;
+
+class QueueActivity {
+  // Bumped by writes from other processes; wakes every queue.
+  private globalGeneration = 0;
+  private queueGenerations = new Map<string, number>();
+  private waiters = new Map<string, Set<() => void>>();
+  private lastDataVersion: number | undefined;
+  private timer: ReturnType<typeof setInterval> | undefined;
+
+  // `readDataVersion` returns SQLite's data_version for the queue connection,
+  // which only changes when another connection commits.
+  constructor(private readonly readDataVersion: () => number) {}
+
+  generation(queue: string): number {
+    return this.globalGeneration + (this.queueGenerations.get(queue) ?? 0);
+  }
+
+  notify(queue: string) {
+    this.queueGenerations.set(
+      queue,
+      (this.queueGenerations.get(queue) ?? 0) + 1,
+    );
+    this.wake(this.waiters.get(queue));
+  }
+
+  // Resolves once the queue's generation moves past `seen`, or after timeoutMs.
+  async waitForChange(queue: string, seen: number, timeoutMs: number) {
+    if (this.generation(queue) !== seen) {
+      return;
+    }
+    this.startWatchingExternalWrites();
+    await new Promise<void>((resolve) => {
+      let waiters = this.waiters.get(queue);
+      if (!waiters) {
+        waiters = new Set();
+        this.waiters.set(queue, waiters);
+      }
+      const done = () => {
+        clearTimeout(timeout);
+        waiters.delete(done);
+        resolve();
+      };
+      const timeout = setTimeout(done, timeoutMs);
+      waiters.add(done);
+    });
+  }
+
+  private wake(waiters: Set<() => void> | undefined) {
+    // Each waiter removes itself, which a Set iteration tolerates.
+    for (const done of waiters ?? []) {
+      done();
+    }
+  }
+
+  private startWatchingExternalWrites() {
+    if (this.timer) {
+      return;
+    }
+    this.lastDataVersion = this.readDataVersion();
+    this.timer = setInterval(() => {
+      const dataVersion = this.readDataVersion();
+      if (dataVersion === this.lastDataVersion) {
+        return;
+      }
+      this.lastDataVersion = dataVersion;
+      this.globalGeneration++;
+      for (const waiters of this.waiters.values()) {
+        this.wake(waiters);
+      }
+    }, EXTERNAL_WRITE_CHECK_MS);
+  }
+}
+
+// A view of the queue for liteque's runner whose attemptDequeue waits while
+// the queue is idle, as described above QueueActivity.
+function idleAwareQueue<T>(
+  lq: LQ<T>,
+  activity: QueueActivity,
+  isStopping: () => boolean,
+): LQ<T> {
+  const name = lq.name();
+  let idle: { generation: number; since: number } | undefined;
+  const queue = Object.create(lq) as LQ<T>;
+  queue.attemptDequeue = async (options) => {
+    if (idle) {
+      const remaining = IDLE_MAX_WAIT_MS - (Date.now() - idle.since);
+      if (remaining > 0) {
+        await activity.waitForChange(name, idle.generation, remaining);
+      }
+    }
+    if (isStopping()) {
+      return null;
+    }
+    const generation = activity.generation(name);
+    const job = await lq.attemptDequeue(options);
+    idle = job ? undefined : { generation, since: Date.now() };
+    return job;
+  };
+  queue.finalize = async (...args) => {
+    await lq.finalize(...args);
+    // A finished run frees a slot and may have left a retry behind, and
+    // runUntilEmpty() needs to recheck once nothing is in flight.
+    activity.notify(name);
+  };
+  return queue;
+}
+
 class LitequeQueueWrapper<T> implements Queue<T> {
   constructor(
     private readonly _name: string,
     private readonly lq: LQ<T>,
     public readonly opts: QueueOptions,
+    private readonly activity: QueueActivity,
   ) {}
 
   ensureInit(): Promise<void> {
@@ -44,6 +162,7 @@ class LitequeQueueWrapper<T> implements Queue<T> {
     options?: EnqueueOptions,
   ): Promise<string | undefined> {
     const job = await this.lq.enqueue(payload, options);
+    this.activity.notify(this._name);
     // liteque returns a Job with numeric id
     return job ? String(job.id) : undefined;
   }
@@ -65,6 +184,21 @@ class LitequeQueueWrapper<T> implements Queue<T> {
 class LitequeQueueClient implements QueueClient {
   private db = buildDBClient(path.join(serverConfig.dataDir, "queue.db"), {
     walEnabled: serverConfig.database.walMode,
+  });
+
+  private activity = new QueueActivity(() => {
+    // liteque doesn't expose its better-sqlite3 handle, and its drizzle
+    // version keeps it on the session.
+    const { client } = (
+      this.db as unknown as {
+        session: {
+          client: {
+            pragma(source: string, options: { simple: true }): unknown;
+          };
+        };
+      }
+    ).session;
+    return client.pragma("data_version", { simple: true }) as number;
   });
 
   private queues = new Map<string, LitequeQueueWrapper<unknown>>();
@@ -89,7 +223,12 @@ class LitequeQueueClient implements QueueClient {
       defaultJobArgs: { numRetries: options.defaultJobArgs.numRetries },
       keepFailedJobs: options.keepFailedJobs,
     });
-    const wrapper = new LitequeQueueWrapper<T>(name, lq, options);
+    const wrapper = new LitequeQueueWrapper<T>(
+      name,
+      lq,
+      options,
+      this.activity,
+    );
     this.queues.set(name, wrapper);
     return wrapper;
   }
@@ -120,15 +259,16 @@ class LitequeQueueClient implements QueueClient {
       }
     };
 
+    let stopping = false;
     const runner = new LQRunner<T, R>(
-      wrapper._impl,
+      idleAwareQueue(wrapper._impl, this.activity, () => stopping),
       {
         run: wrappedRun,
         onComplete: funcs.onComplete,
         onError: funcs.onError,
       },
       {
-        pollIntervalMs: opts.pollIntervalMs ?? 1000,
+        pollIntervalMs: opts.pollIntervalMs ?? RUNNER_POLL_INTERVAL_MS,
         timeoutSecs: opts.timeoutSecs,
         concurrency: opts.concurrency,
         validator: opts.validator,
@@ -137,7 +277,12 @@ class LitequeQueueClient implements QueueClient {
 
     return {
       run: () => runner.run(),
-      stop: () => runner.stop(),
+      stop: () => {
+        stopping = true;
+        runner.stop();
+        // Wake the runner if it's waiting for work so it can exit.
+        this.activity.notify(name);
+      },
       runUntilEmpty: () => runner.runUntilEmpty(),
     };
   }
