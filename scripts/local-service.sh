@@ -29,6 +29,18 @@ log() {
     printf '==> %s\n' "$*"
 }
 
+# bootout returns before the job has stopped, and bootstrapping it again
+# before then fails, so wait for it to go away.
+stop_job() {
+    launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || return 0
+    for _ in $(seq 1 60); do
+        launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || return 0
+        sleep 0.5
+    done
+    log "$LABEL didn't stop within 30s"
+    exit 1
+}
+
 # What launchd runs: bind the Tailscale IP (fails until Tailscale is up, and
 # launchd retries) and 127.0.0.1.
 run() {
@@ -79,8 +91,10 @@ install() {
     <!-- run-local.sh needs up to 5s to stop web and workers. -->
     <key>ExitTimeOut</key>
     <integer>15</integer>
+    <!-- Not Background: that throttles CPU and I/O, which made page loads
+         several times slower. Idle, it uses next to no CPU either way. -->
     <key>ProcessType</key>
-    <string>Background</string>
+    <string>Interactive</string>
     <key>StandardOutPath</key>
     <string>$LOG</string>
     <key>StandardErrorPath</key>
@@ -97,14 +111,14 @@ EOF
         log "No $MEILI_CONTAINER container found; start Meilisearch yourself"
     fi
 
-    launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+    stop_job
     launchctl bootstrap "$DOMAIN" "$PLIST"
     log "Installed $LABEL (log: $LOG)"
     log "It builds first if the code changed, so the first start can take a few minutes"
 }
 
 uninstall() {
-    launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+    stop_job
     rm -f "$PLIST"
     log "Removed $LABEL ($MEILI_CONTAINER keeps its restart policy)"
 }
