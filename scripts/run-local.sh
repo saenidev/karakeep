@@ -11,7 +11,12 @@
 #
 # Env overrides:
 #   PORT   web port (default: 3100)
-#   HOST   address to bind and to use in NEXTAUTH_URL (default: localhost)
+#   HOST   address to bind and to use in NEXTAUTH_URL (default: localhost).
+#          A comma-separated list binds every address; the first one goes in
+#          NEXTAUTH_URL (e.g. HOST="$(tailscale ip -4),127.0.0.1").
+#
+# To keep it running in the background and start it at login, see
+# scripts/local-service.sh.
 
 set -euo pipefail
 
@@ -89,7 +94,13 @@ start() {
     . ./.env
     set +a
     export PORT="${PORT:-3100}"
-    export HOSTNAME="${HOST:-localhost}"
+    local hosts="${HOST:-localhost}"
+    export HOSTNAME="${hosts%%,*}"
+    # Read by scripts/also-listen.mjs in the web process.
+    export ALSO_LISTEN_HOSTS=""
+    if [[ "$hosts" == *,* ]]; then
+        ALSO_LISTEN_HOSTS="${hosts#*,}"
+    fi
     export NEXTAUTH_URL="http://$HOSTNAME:$PORT"
     export NODE_ENV=production
     # A small young generation keeps V8 from holding on to ~100MB of heap it
@@ -110,7 +121,7 @@ start() {
     WORKERS_PID=$!
 
     log "Starting web on $NEXTAUTH_URL (log: $LOG_DIR/web.log)"
-    (cd "$STANDALONE/apps/web" && exec node $node_flags server.js) >"$LOG_DIR/web.log" 2>&1 &
+    (cd "$STANDALONE/apps/web" && exec node $node_flags --import "$ROOT/scripts/also-listen.mjs" server.js) >"$LOG_DIR/web.log" 2>&1 &
     WEB_PID=$!
 
     local deadline=$((SECONDS + 60))
