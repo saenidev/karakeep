@@ -2,7 +2,8 @@
 
 # Keeps `pnpm local` (scripts/run-local.sh) running as a launchd agent: it
 # starts at login, restarts if it dies, and binds the Tailscale IP plus
-# 127.0.0.1 on PORT. The Meilisearch container is set to come back whenever
+# 127.0.0.1 on PORT. Its public URL (NEXTAUTH_URL) uses the Mac's MagicDNS
+# name, falling back to the IP when Tailscale gives no name. The Meilisearch container is set to come back whenever
 # Docker starts.
 #
 # Usage:
@@ -41,16 +42,24 @@ stop_job() {
     exit 1
 }
 
+# This machine's MagicDNS name (Self.DNSName, trailing dot stripped), or
+# nothing when Tailscale has none.
+magicdns_name() {
+    tailscale status --json 2>/dev/null \
+        | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write((JSON.parse(s).Self?.DNSName||"").replace(/\.$/,""))}catch{}})'
+}
+
 # What launchd runs: bind the Tailscale IP (fails until Tailscale is up, and
-# launchd retries) and 127.0.0.1.
+# launchd retries) and 127.0.0.1, and publish the MagicDNS name.
 run() {
-    local ip
+    local ip name
     ip="$(tailscale ip -4 | head -n 1)"
     if [ -z "$ip" ]; then
         log "No Tailscale IP yet"
         exit 1
     fi
-    HOST="$ip,127.0.0.1" exec bash "$ROOT/scripts/run-local.sh"
+    name="$(magicdns_name || true)"
+    HOST="$ip,127.0.0.1" PUBLIC_HOST="${name:-$ip}" exec bash "$ROOT/scripts/run-local.sh"
 }
 
 install() {

@@ -11,9 +11,12 @@
 #
 # Env overrides:
 #   PORT   web port (default: 3100)
-#   HOST   address to bind and to use in NEXTAUTH_URL (default: localhost).
-#          A comma-separated list binds every address; the first one goes in
-#          NEXTAUTH_URL (e.g. HOST="$(tailscale ip -4),127.0.0.1").
+#   HOST   address to bind (default: localhost). A comma-separated list
+#          binds every address (e.g. HOST="$(tailscale ip -4),127.0.0.1").
+#   PUBLIC_HOST
+#          host for NEXTAUTH_URL, the URL browsers use (default: the first
+#          HOST), e.g. the MagicDNS name juns-macbook-pro.uaru-trout.ts.net
+#          while HOST binds the Tailscale IP.
 #
 # To keep it running in the background and start it at login, see
 # scripts/local-service.sh.
@@ -101,7 +104,9 @@ start() {
     if [[ "$hosts" == *,* ]]; then
         ALSO_LISTEN_HOSTS="${hosts#*,}"
     fi
-    export NEXTAUTH_URL="http://$HOSTNAME:$PORT"
+    export NEXTAUTH_URL="http://${PUBLIC_HOST:-$HOSTNAME}:$PORT"
+    # Health checks go to the address we bind, not the public name.
+    local local_url="http://$HOSTNAME:$PORT"
     export NODE_ENV=production
     # A small young generation keeps V8 from holding on to ~100MB of heap it
     # grew into during startup and no longer uses.
@@ -125,7 +130,7 @@ start() {
     WEB_PID=$!
 
     local deadline=$((SECONDS + 60))
-    until curl -s -o /dev/null -m 5 "$NEXTAUTH_URL/api/health"; do
+    until curl -s -o /dev/null -m 5 "$local_url/api/health"; do
         fail_if_dead
         if [ "$SECONDS" -ge "$deadline" ]; then
             log "The web app didn't become ready within a minute"
