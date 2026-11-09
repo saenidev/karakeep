@@ -155,6 +155,10 @@ start() {
     if [ "$host" != localhost ]; then
         # Next blocks dev resources (HMR, fonts) for origins other than localhost.
         export ALLOWED_DEV_ORIGINS="${ALLOWED_DEV_ORIGINS:+$ALLOWED_DEV_ORIGINS,}$host"
+        if [[ "$host" == *.ts.net ]]; then
+            # A MagicDNS name also resolves by its short form (the first label).
+            ALLOWED_DEV_ORIGINS="$ALLOWED_DEV_ORIGINS,${host%%.*}"
+        fi
     fi
 
     mkdir -p "$LOG_DIR"

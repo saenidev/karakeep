@@ -70,7 +70,7 @@ Starting services:
 - `pnpm web`: Start the web application (this doesn't return, unless you kill it).
 - `pnpm workers`: Starts the background workers (this doesn't return, unless you kill it).
 - `pnpm local`: Runs web + workers from production builds (rebuilds when the code changed). Use it for day-to-day use; it's much faster and lighter than the dev servers. Set `HOST` and `PORT` to bind elsewhere (`HOST` takes a comma-separated list), and `PUBLIC_HOST` for the host in `NEXTAUTH_URL` (default: the first `HOST`).
-- `scripts/local-service.sh install|restart|status|uninstall`: Keeps `pnpm local` running as a launchd agent (starts at login, restarts on crash), bound to the Tailscale IP and 127.0.0.1 on port 3100, with `NEXTAUTH_URL` on the MagicDNS name (`http://juns-macbook-pro.uaru-trout.ts.net:3100`). Run `restart` after pulling changes to rebuild.
+- `scripts/local-service.sh install|restart|status|uninstall`: Keeps `pnpm local` running as a launchd agent (starts at login, restarts on crash), bound to the Tailscale IP and 127.0.0.1 on port 3100, with `NEXTAUTH_URL` on the MagicDNS name read from `tailscale status` at start (`http://juns-macbook-pro.uaru-trout.ts.net:3100`; run `restart` after renaming the Mac). The short name (`http://juns-macbook-pro:3100`) signs in too: there is no host allowlist and better-auth trusts the request's own origin (`AUTH_TRUSTED_ORIGINS` default `*`). Run `restart` after pulling changes to rebuild.
 
 ### Committing
 
